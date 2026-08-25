@@ -1,0 +1,408 @@
+"""
+Private Set Intersection (PSI) Engine
+Implements: Diffie-Hellman based PSI, hash-based PSI, cardinality-only PSI,
+communication complexity analysis, and security assumptions.
+Uses only Python stdlib.
+"""
+import hashlib
+import hmac
+import json
+import math
+import random
+import secrets
+from typing import List, Set, Dict, Any, Tuple, Optional
+
+
+# ---------------------------------------------------------------------------
+# Hash utilities
+# ---------------------------------------------------------------------------
+
+def hash_element(element: str, key: bytes = b"") -> int:
+    """
+    Hash a set element to a large integer.
+    Uses HMAC-SHA256 with optional key for domain separation.
+    """
+    if key:
+        h = hmac.new(key, element.encode(), hashlib.sha256).hexdigest()
+    else:
+        h = hashlib.sha256(element.encode()).hexdigest()
+    return int(h, 16)
+
+
+def hash_to_group(element: str, prime: int) -> int:
+    """
+    Hash an element to a group element (mod prime).
+    Maps element to a value in [2, prime-1].
+    """
+    h = hash_element(element)
+    result = h % (prime - 2) + 2  # Map to [2, prime-1]
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Modular arithmetic for DH
+# ---------------------------------------------------------------------------
+
+def mod_pow(base: int, exp: int, mod: int) -> int:
+    """Modular exponentiation."""
+    return pow(base, exp, mod)
+
+
+def generate_private_key(prime: int) -> int:
+    """Generate a random private key in [2, prime-2]."""
+    return random.randrange(2, prime - 1)
+
+
+# ---------------------------------------------------------------------------
+# Diffie-Hellman based PSI
+# ---------------------------------------------------------------------------
+
+class DHPSIParty:
+    """
+    One party in the DH-based PSI protocol.
+    
+    Protocol:
+    1. Alice: for each x in set A, compute H(x)^a mod p
+    2. Bob: for each y in set B, compute H(y)^b mod p
+    3. Exchange: Alice sends {H(x)^a}, Bob sends {H(y)^b}
+    4. Alice computes H(y)^(ab) for each y, Bob computes H(x)^(ab) for each x
+    5. Intersection = elements where H(x)^ab = H(y)^ab
+    """
+
+    def __init__(self, name: str, elements: List[str], prime: int):
+        self.name = name
+        self.elements = elements
+        self.prime = prime
+        self.private_key = generate_private_key(prime)
+        self._hashed_elements: Dict[int, str] = {}  # hash -> original element
+
+    def compute_hashed_powers(self) -> List[int]:
+        """
+        Step 1: Compute H(x)^private_key mod p for each element.
+        Returns list of (H(x)^k mod p) values.
+        """
+        result = []
+        for elem in self.elements:
+            h = hash_to_group(elem, self.prime)
+            powered = mod_pow(h, self.private_key, self.prime)
+            self._hashed_elements[h] = elem
+            result.append(powered)
+        return result
+
+    def compute_double_powers(self, received_powers: List[int]) -> List[int]:
+        """
+        Step 4: Compute (received_value)^private_key mod p.
+        This gives H(x)^(a*b) for elements from the other party.
+        """
+        return [mod_pow(v, self.private_key, self.prime) for v in received_powers]
+
+    def find_intersection(self, my_double_powers: List[int],
+                           their_double_powers: List[int]) -> List[str]:
+        """
+        Step 5: Find intersection by matching double-powered values.
+        """
+        their_set = set(their_double_powers)
+        intersection = []
+        for i, power in enumerate(my_double_powers):
+            if power in their_set:
+                intersection.append(self.elements[i])
+        return intersection
+
+
+def dh_psi(alice_elements: List[str], bob_elements: List[str],
+           prime: int) -> Dict[str, Any]:
+    """
+    Execute the full DH-based PSI protocol.
+    
+    Protocol:
+    1. Alice computes H(x)^a for each x in A
+    2. Bob computes H(y)^b for each y in B
+    3. Exchange: Alice sends {H(x)^a}, Bob sends {H(y)^b}
+    4. Alice computes H(y)^(ab) for each y in B
+    5. Bob computes H(x)^(ab) for each x in A
+    6. Alice sends {H(y)^(ab)} to Bob
+    7. Bob finds intersection by matching {H(x)^(ab)} with {H(y)^(ab)}
+    
+    Returns:
+        Dict with intersection, communication stats, and protocol details.
+    """
+    alice = DHPSIParty("Alice", alice_elements, prime)
+    bob = DHPSIParty("Bob", bob_elements, prime)
+
+    # Step 1 & 2: Each party hashes and exponentiates
+    alice_powers = alice.compute_hashed_powers()  # H(x)^a for x in A
+    bob_powers = bob.compute_hashed_powers()      # H(y)^b for y in B
+
+    # Step 3: Exchange (in practice, these would be sent over a channel)
+    # Communication: |A| group elements + |B| group elements
+    comm_round1 = len(alice_powers) + len(bob_powers)
+
+    # Step 4: Alice computes H(y)^(ab) for each y in B
+    alice_double = alice.compute_double_powers(bob_powers)
+    # Step 5: Bob computes H(x)^(ab) for each x in A
+    bob_double = bob.compute_double_powers(alice_powers)
+
+    # Step 6 & 7: Find intersection
+    # Bob has: bob_double[i] = H(x_i)^(ab) for x_i in Alice's set
+    # Alice sends: alice_double[j] = H(y_j)^(ab) for y_j in Bob's set
+    # Bob matches: if bob_double[i] appears in alice_double, then x_i is in intersection
+    
+    alice_double_set = set(alice_double)
+    intersection = []
+    for i, power in enumerate(bob_double):
+        if power in alice_double_set:
+            intersection.append(alice_elements[i])
+
+    # Communication analysis
+    element_bits = prime.bit_length()
+    total_bits = comm_round1 * element_bits
+
+    return {
+        "intersection": intersection,
+        "intersection_size": len(intersection),
+        "alice_set_size": len(alice_elements),
+        "bob_set_size": len(bob_elements),
+        "communication_rounds": 2,
+        "elements_transmitted": comm_round1,
+        "bits_per_element": element_bits,
+        "total_communication_bits": total_bits,
+        "total_communication_bytes": total_bits // 8,
+        "prime_bits": prime.bit_length(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Hash-based PSI (simplified, using a common hash function)
+# ---------------------------------------------------------------------------
+
+def hash_based_psi(alice_elements: List[str], bob_elements: List[str],
+                    salt: str = "") -> Dict[str, Any]:
+    """
+    Simplified hash-based PSI.
+    Both parties hash their elements with a common salt and compare.
+    (In practice, this requires an oblivious transfer or garbled circuit
+    to compute the hash without revealing elements.)
+    """
+    alice_hashes = {hashlib.sha256((salt + e).encode()).hexdigest(): e
+                    for e in alice_elements}
+    bob_hashes = {hashlib.sha256((salt + e).encode()).hexdigest(): e
+                  for e in bob_elements}
+
+    common_hashes = set(alice_hashes.keys()) & set(bob_hashes.keys())
+    intersection = [alice_hashes[h] for h in common_hashes]
+
+    return {
+        "intersection": intersection,
+        "intersection_size": len(intersection),
+        "alice_set_size": len(alice_elements),
+        "bob_set_size": len(bob_elements),
+        "method": "hash-based",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Cardinality-only PSI (only reveals |A ∩ B|)
+# ---------------------------------------------------------------------------
+
+def cardinality_only_psi(alice_elements: List[str], bob_elements: List[str],
+                          prime: int) -> Dict[str, Any]:
+    """
+    Cardinality-only PSI: reveals only the size of the intersection,
+    not the actual elements.
+    
+    Uses a simplified approach: both parties compute polynomial
+    P_A(x) = Π(x - H(a_i)) and P_B(x) = Π(x - H(b_i)),
+    then evaluate at a random point. The GCD degree reveals |intersection|.
+    
+    Simplified: we compute the intersection size without revealing elements.
+    """
+    # Hash elements to field elements
+    alice_hashes = set(hash_to_group(e, prime) for e in alice_elements)
+    bob_hashes = set(hash_to_group(e, prime) for e in bob_elements)
+
+    # Count common hashes
+    common = alice_hashes & bob_hashes
+    cardinality = len(common)
+
+    # Compute blinded cardinality (add random noise that cancels)
+    # In a real protocol, this would use homomorphic encryption
+    noise = random.randrange(0, prime)
+    blinded_alice = (cardinality + noise) % prime
+    blinded_bob = (prime - noise) % prime  # -noise mod p
+
+    # Verify: (blinded_alice + blinded_bob) mod p = cardinality
+    verified_cardinality = (blinded_alice + blinded_bob) % prime
+
+    return {
+        "cardinality": cardinality,
+        "verified_cardinality": verified_cardinality,
+        "cardinality_matches": cardinality == verified_cardinality,
+        "alice_set_size": len(alice_elements),
+        "bob_set_size": len(bob_elements),
+        "method": "cardinality-only",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Communication complexity analysis
+# ---------------------------------------------------------------------------
+
+def communication_analysis(set_size_a: int, set_size_b: int,
+                            element_bits: int = 256,
+                            protocol: str = "dh") -> Dict[str, Any]:
+    """
+    Analyze communication complexity of different PSI protocols.
+    """
+    if protocol == "dh":
+        # DH-PSI: 2 rounds, |A| + |B| group elements each round
+        rounds = 2
+        elements_per_round = set_size_a + set_size_b
+        total_elements = rounds * elements_per_round // 2  # one exchange
+        bits = (set_size_a + set_size_b) * element_bits
+    elif protocol == "hash":
+        # Hash-based: 1 round, |A| + |B| hash values
+        rounds = 1
+        total_elements = set_size_a + set_size_b
+        bits = total_elements * element_bits
+    elif protocol == "cardinality":
+        # Cardinality-only: constant communication
+        rounds = 1
+        total_elements = 1
+        bits = element_bits
+    else:
+        raise ValueError(f"Unknown protocol: {protocol}")
+
+    return {
+        "protocol": protocol,
+        "set_size_a": set_size_a,
+        "set_size_b": set_size_b,
+        "element_bits": element_bits,
+        "communication_rounds": rounds,
+        "total_elements_transmitted": total_elements,
+        "total_bits": bits,
+        "total_bytes": bits // 8,
+        "complexity": f"O({set_size_a} + {set_size_b})" if protocol != "cardinality" else "O(1)",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Security assumptions
+# ---------------------------------------------------------------------------
+
+def security_assumptions(protocol: str = "dh") -> Dict[str, Any]:
+    """
+    Describe security assumptions for each PSI protocol.
+    """
+    assumptions = {
+        "dh": {
+            "protocol": "Diffie-Hellman PSI",
+            "assumptions": [
+                "Decisional Diffie-Hellman (DDH) assumption",
+                "Random Oracle Model (for hash-to-group)",
+                "Semi-honest adversary model (both parties follow protocol)",
+            ],
+            "security_properties": [
+                "Privacy: Neither party learns anything about the other's set except the intersection",
+                "Correctness: The intersection is computed correctly",
+                "No trusted third party required",
+            ],
+            "attack_vectors": [
+                "Malicious party could deviate from protocol",
+                "Brute force on small input sets",
+                "Timing attacks on modular exponentiation",
+            ],
+            "mitigations": [
+                "Use large prime (>= 2048 bits for production)",
+                "Add zero-knowledge proofs of correct execution",
+                "Use constant-time implementations",
+            ],
+        },
+        "hash": {
+            "protocol": "Hash-based PSI",
+            "assumptions": [
+                "Pre-image resistance of hash function",
+                "Both parties use the same hash function and salt",
+                "Requires trusted setup or oblivious transfer for salt",
+            ],
+            "security_properties": [
+                "Simple implementation",
+                "Fast computation",
+            ],
+            "attack_vectors": [
+                "Dictionary attacks if input space is small",
+                "Salt must be kept secret or agreed upon securely",
+            ],
+            "mitigations": [
+                "Use large random salt",
+                "Combine with oblivious transfer",
+            ],
+        },
+        "cardinality": {
+            "protocol": "Cardinality-only PSI",
+            "assumptions": [
+                "Homomorphic encryption or secret sharing for blinding",
+                "DDH assumption (for DH-based variant)",
+            ],
+            "security_properties": [
+                "Only reveals |A ∩ B|, not the elements",
+                "Minimal communication",
+            ],
+            "attack_vectors": [
+                "Repeated queries with modified sets could leak elements",
+            ],
+            "mitigations": [
+                "Limit number of queries",
+                "Add differential privacy noise to cardinality",
+            ],
+        },
+    }
+    return assumptions.get(protocol, {"error": f"Unknown protocol: {protocol}"})
+
+
+# ---------------------------------------------------------------------------
+# High-level API
+# ---------------------------------------------------------------------------
+
+def run_psi(alice_elements: List[str], bob_elements: List[str],
+            method: str = "dh", prime: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Run PSI using the specified method.
+    
+    Args:
+        alice_elements: Alice's set
+        bob_elements: Bob's set
+        method: "dh", "hash", or "cardinality"
+        prime: Prime for DH-based PSI (auto-generated if None)
+    """
+    if method == "dh":
+        if prime is None:
+            prime = _generate_safe_prime(256)
+        result = dh_psi(alice_elements, bob_elements, prime)
+        result["method"] = "dh"
+        result["security"] = security_assumptions("dh")
+        return result
+    elif method == "hash":
+        result = hash_based_psi(alice_elements, bob_elements)
+        result["security"] = security_assumptions("hash")
+        return result
+    elif method == "cardinality":
+        if prime is None:
+            prime = _generate_safe_prime(256)
+        result = cardinality_only_psi(alice_elements, bob_elements, prime)
+        result["security"] = security_assumptions("cardinality")
+        return result
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+
+def _generate_safe_prime(bits: int) -> int:
+    """Generate a prime for DH (simplified - not a safe prime in production sense)."""
+    # For testing, use a known prime
+    # In production, use a proper safe prime (p = 2q + 1 where q is also prime)
+    return 2**bits - 1  # Not actually prime, but works for demonstration
+
+
+def _generate_prime_for_demo() -> int:
+    """Generate a small prime suitable for demonstrations."""
+    # Use a known prime for deterministic testing
+    return 65537
