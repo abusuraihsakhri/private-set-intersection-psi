@@ -6,11 +6,9 @@ Uses only Python stdlib.
 """
 import hashlib
 import hmac
-import json
-import math
 import random
 import secrets
-from typing import List, Set, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +32,8 @@ def hash_to_group(element: str, prime: int) -> int:
     Hash an element to a group element (mod prime).
     Maps element to a value in [2, prime-1].
     """
+    if prime < 3:
+        raise ValueError(f"Prime must be >= 3, got {prime}")
     h = hash_element(element)
     result = h % (prime - 2) + 2  # Map to [2, prime-1]
     return result
@@ -49,8 +49,8 @@ def mod_pow(base: int, exp: int, mod: int) -> int:
 
 
 def generate_private_key(prime: int) -> int:
-    """Generate a random private key in [2, prime-2]."""
-    return random.randrange(2, prime - 1)
+    """Generate a cryptographically secure random private key in [2, prime-2]."""
+    return 2 + secrets.randbelow(prime - 3) if prime > 4 else 2
 
 
 # ---------------------------------------------------------------------------
@@ -183,10 +183,9 @@ def hash_based_psi(alice_elements: List[str], bob_elements: List[str],
     (In practice, this requires an oblivious transfer or garbled circuit
     to compute the hash without revealing elements.)
     """
-    alice_hashes = {hashlib.sha256((salt + e).encode()).hexdigest(): e
-                    for e in alice_elements}
-    bob_hashes = {hashlib.sha256((salt + e).encode()).hexdigest(): e
-                  for e in bob_elements}
+    salt_bytes = salt.encode() if salt else b""
+    alice_hashes = {hash_element(e, salt_bytes): e for e in alice_elements}
+    bob_hashes = {hash_element(e, salt_bytes): e for e in bob_elements}
 
     common_hashes = set(alice_hashes.keys()) & set(bob_hashes.keys())
     intersection = [alice_hashes[h] for h in common_hashes]
@@ -396,13 +395,115 @@ def run_psi(alice_elements: List[str], bob_elements: List[str],
 
 
 def _generate_safe_prime(bits: int) -> int:
-    """Generate a prime for DH (simplified - not a safe prime in production sense)."""
-    # For testing, use a known prime
-    # In production, use a proper safe prime (p = 2q + 1 where q is also prime)
-    return 2**bits - 1  # Not actually prime, but works for demonstration
+    """Generate a prime for DH using probabilistic primality testing.
+
+    For demonstration purposes. In production, use a well-known RFC 3526
+    MODP group or a proper safe prime (p = 2q + 1 where q is also prime).
+    """
+    if bits <= 16:
+        return 65537
+    # Find a prime >= 2**(bits-1) using Miller-Rabin
+    candidate = (1 << (bits - 1)) | 1  # Ensure odd and has top bit set
+    while not _is_probable_prime(candidate, 20):
+        candidate += 2
+    return candidate
 
 
-def _generate_prime_for_demo() -> int:
-    """Generate a small prime suitable for demonstrations."""
-    # Use a known prime for deterministic testing
-    return 65537
+def _is_probable_prime(n: int, rounds: int = 20) -> bool:
+    """Miller-Rabin probabilistic primality test."""
+    if n < 2:
+        return False
+    if n == 2 or n == 3:
+        return True
+    if n % 2 == 0:
+        return False
+    # Write n-1 as 2^r * d
+    r, d = 0, n - 1
+    while d % 2 == 0:
+        r += 1
+        d //= 2
+    # Witness loop
+    for _ in range(rounds):
+        a = random.randrange(2, n - 1)
+        x = pow(a, d, n)
+        if x == 1 or x == n - 1:
+            continue
+        for _ in range(r - 1):
+            x = pow(x, 2, n)
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Frontier Domain Engine (PSI protocol evaluation & conformance)
+# ---------------------------------------------------------------------------
+
+class FrontierDomainEngine:
+    """Domain-specific evaluation engine for PSI protocol metrics.
+
+    Provides threshold-based evaluation of primary parameters, secondary
+    kinetics, and specification conformance for the PSI protocol.
+    """
+
+    PRIMARY_THRESHOLD = 25.0
+    SECONDARY_THRESHOLD = 12.0
+    DISCORDANT_KEYWORDS = {"DISCORDANT", "ANOMALY", "MUTANT", "VIOLATION", "FAIL", "REJECT"}
+
+    @staticmethod
+    def evaluate_primary_parameter(primary_metric: float) -> Optional[Dict[str, Any]]:
+        """Evaluate primary parameter against PSI protocol thresholds."""
+        if primary_metric > FrontierDomainEngine.PRIMARY_THRESHOLD:
+            return {
+                "summary": "Primary Metric Threshold Exceeded",
+                "details": (
+                    f"Primary measurement ({primary_metric:.2f}) exceeds upper "
+                    f"reference limit ({FrontierDomainEngine.PRIMARY_THRESHOLD:.2f}) "
+                    f"under Private Set Intersection (PSI) Protocol."
+                ),
+                "remediation": (
+                    "Initiate protocol recalibration and verify secondary "
+                    "parameters against PSI specification bounds."
+                ),
+            }
+        return None
+
+    @staticmethod
+    def evaluate_secondary_kinetics(secondary_metric: float,
+                                     is_critical_flag: bool) -> Optional[Dict[str, Any]]:
+        """Evaluate secondary kinetics against safety boundaries."""
+        if is_critical_flag or secondary_metric > FrontierDomainEngine.SECONDARY_THRESHOLD:
+            return {
+                "summary": "Critical Safety Interlock Triggered",
+                "details": (
+                    f"CriticalFlag={is_critical_flag} with secondary index "
+                    f"{secondary_metric:.2f} exceeding threshold "
+                    f"({FrontierDomainEngine.SECONDARY_THRESHOLD:.2f})."
+                ),
+                "remediation": (
+                    "Execute immediate closed-loop escalation and notify "
+                    "attending supervisor for PSI protocol review."
+                ),
+            }
+        return None
+
+    @staticmethod
+    def audit_specification_conformance(status_descriptor: str,
+                                         attributes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Audit status descriptor for PSI protocol conformance."""
+        desc_upper = str(status_descriptor).upper()
+        if any(kw in desc_upper for kw in FrontierDomainEngine.DISCORDANT_KEYWORDS):
+            return {
+                "summary": "Protocol Conformance Discordance Detected",
+                "details": (
+                    f"Descriptor '{status_descriptor}' indicates discordance "
+                    f"with Private Set Intersection (PSI) Protocol standards."
+                ),
+                "remediation": (
+                    "Re-evaluate input parameters or rerun secondary "
+                    "confirmation assay per PSI protocol specification."
+                ),
+            }
+        return None
