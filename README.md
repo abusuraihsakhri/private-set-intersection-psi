@@ -1,196 +1,110 @@
-# Private Set Intersection (PSI)
+# Private Set Intersection (PSI) Demonstrator
 
-> **Domain:** Privacy-Preserving Healthcare & Federated Computing
-> **Standards:** HIPAA Safe Harbor §164.514, Diffie-Hellman PSI Protocol
+Two-set comparison tools, a Python implementation of simplified Diffie–Hellman-style matching, and a browser-based educational laboratory.
 
-<div align="center">
+**Security scope:** This repository demonstrates PSI-related computations; it is **not** a cryptographically validated two-party PSI implementation. The Python and browser examples access both raw sets in one process. Do not use them to process patient records, protected health information, credentials, or other confidential data.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)
-![Audit Trail](https://img.shields.io/badge/Audit-HMAC--SHA256_Tamper--Evident-brightgreen.svg)
-![Zero-PHI Guard](https://img.shields.io/badge/Guard-Zero--PHI_Outbound-blue.svg)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)
+## Browser application
 
-</div>
+The interactive application in `web/` runs in the browser with no backend, telemetry, cookies, or remote processing. It supports:
 
----
+- Exact set intersection (one item per line; case-sensitive; duplicates removed).
+- Cardinality-only output (the number of shared items without listing them).
+- SHA-256 hash-token matching using browser Web Crypto (educational, **not private PSI**).
+- Overlap statistics, example data, set swapping, validation, and JSON export.
 
-## Overview
+Input is held in the current tab and is not sent to a server. The browser page uses JavaScript rather than the Python engine; Pyodide is not required. SHA-256 hashes of small or guessable domains are subject to dictionary attacks.
 
-Private Set Intersection (PSI) is a cryptographic protocol that allows two parties
-to compute the intersection of their sets without revealing any elements that are
-not in the intersection. This implementation provides:
-
-- **Diffie-Hellman based PSI** — Secure two-party PSI using modular exponentiation
-- **Hash-based PSI** — Simplified PSI using salted HMAC-SHA256 hashing
-- **Cardinality-only PSI** — Reveals only |A ∩ B|, not the actual elements
-- **Communication analysis** — Compare protocol efficiency
-- **PHI outbound guard** — HIPAA Safe Harbor compliance for healthcare data
-- **Tamper-evident audit trail** — HMAC-SHA256 chained audit logging
-
----
-
-## Installation
+For local use:
 
 ```bash
-# Clone the repository
-git clone https://github.com/abusuraihsakhri/private-set-intersection-psi.git
-cd private-set-intersection-psi
-
-# Install dependencies (Python 3.9+ required, no external deps for core PSI)
-pip install -e .
-
-# Optional: install FastAPI/uvicorn for REST API server
-pip install fastapi uvicorn pydantic
-
-# Optional: install pytest for running tests
-pip install pytest
+python -m http.server 8080 --directory web
+# Open http://localhost:8080
 ```
 
----
+JavaScript modules require HTTP(S); opening `web/index.html` directly as a `file://` URL may not work. Modern Chromium, Firefox, and Safari browsers support the required APIs. SHA-256 mode needs HTTPS or localhost.
 
-## Usage
+## Python installation
 
-### Command-Line Interface
-
-The project provides two CLI entry points:
-
-#### 1. PSI Protocol CLI (`cli.py`)
-Direct access to PSI cryptographic operations:
+Python 3.9+ is required for the core standard-library PSI examples. Python 3.10–3.12 are covered by CI.
 
 ```bash
-# Run DH-based PSI
-python cli.py dh --alice '["patient-001", "patient-002", "patient-003"]' \
-                  --bob '["patient-002", "patient-003", "patient-004"]' \
-                  --prime 65537
+git clone https://github.com/abusuraihsakhri/private-set-intersection-psi.git
+cd private-set-intersection-psi
+python -m pip install -e .
+```
 
-# Run hash-based PSI with salt
-python cli.py hash --alice '["a", "b", "c"]' --bob '["b", "c", "d"]' --salt "shared-secret"
+Install the optional API and testing dependencies when needed:
 
-# Run cardinality-only PSI
-python cli.py cardinality --alice '["x", "y"]' --bob '["y", "z"]' --prime 65537
+```bash
+python -m pip install -e ".[api,test]"
+```
 
-# Communication complexity analysis
-python cli.py comm --size-a 1000 --size-b 5000 --protocol dh
+## CLI and Python API
 
-# Security assumptions reference
+```bash
+python cli.py dh --alice '["a","b"]' --bob '["b","c"]' --prime 65537
+python cli.py hash --alice '["a","b"]' --bob '["b","c"]'
+python cli.py cardinality --alice '["a","b"]' --bob '["b","c"]' --prime 65537
+python cli.py comm --size-a 100 --size-b 200 --protocol dh
 python cli.py security --protocol dh
 ```
 
-#### 2. PSI Registry Agent CLI (`psi_registry/cli.py`)
-Multi-agent evaluation system with PHI protection:
-
-```bash
-# Single audit evaluation
-python -m psi_registry.cli audit --task-id "TASK-001" --primary 28.4 --secondary 14.2 --critical
-
-# Batch CSV processing
-python -m psi_registry.cli batch -i sample.csv -o results.csv
-
-# Interactive supervisory chat
-python -m psi_registry.cli chat "What is the system status?"
-
-# Launch FastAPI REST server
-python -m psi_registry.cli serve --host 127.0.0.1 --port 8000
-```
-
-### Python API
-
 ```python
-from psi_registry.engine import dh_psi, hash_based_psi, cardinality_only_psi, run_psi
+from psi_registry.engine import dh_psi, hash_based_psi, cardinality_only_psi
 
-# DH-based PSI
-result = dh_psi(
-    alice_elements=["patient-001", "patient-002"],
-    bob_elements=["patient-002", "patient-003"],
-    prime=65537
-)
-print(result["intersection"])  # ["patient-002"]
-
-# Hash-based PSI
-result = hash_based_psi(["a", "b"], ["b", "c"], salt="shared-salt")
-
-# Cardinality-only PSI
-result = cardinality_only_psi(["x", "y"], ["y", "z"], prime=65537)
-print(result["cardinality"])  # 1
+assert dh_psi(["a", "b"], ["b", "c"], 65537)["intersection"] == ["b"]
+assert hash_based_psi(["a", "b"], ["b", "c"])["intersection"] == ["b"]
+assert cardinality_only_psi(["a", "b"], ["b", "c"], 65537)["cardinality"] == 1
 ```
 
-### REST API (FastAPI)
+The DH demonstration requires a prime modulus and coprime exponents, and rejects detected hash-to-group collisions. Small primes such as 65537 and the 256-bit default parameter are **not suitable for production cryptography**. The cardinality function computes the count centrally, without secure multiparty computation. Public hash matching is not oblivious PRF or OT-based PSI. For confidential cross-institution data matching, use a formally specified and independently audited protocol/library, approved infrastructure, and an appropriate privacy assessment.
+
+## Registry / audit demo and REST API
+
+An independent `psi_registry` component evaluates generic numerical thresholds; it is not a validated clinical decision system and does not implement the PSI cryptographic exchange.
 
 ```bash
-# Start server
-python -m psi_registry.cli serve
-
-# Health check
-curl http://localhost:8000/health
-
-# Audit endpoint
-curl -X POST http://localhost:8000/api/audit \
-  -H "Content-Type: application/json" \
-  -d @sample_payload.json
-
-# Audit trail
-curl http://localhost:8000/api/audit/logs
+python -m psi_registry.cli audit --task-id TASK-001 --primary 28.4 --secondary 14.2 --critical
+python -m psi_registry.cli batch -i sample.csv -o results.csv
+python -m psi_registry.cli serve --host 127.0.0.1 --port 8000
+curl http://127.0.0.1:8000/health
 ```
 
----
+With API extras installed, `POST /api/audit` and `POST /api/chat` are exposed by `psi_registry.server`. The separate `agents.api` application provides its own audit endpoints (run with `uvicorn agents.api:app`); the two applications are not interchangeable.
 
-## Security Features
-
-- **Cryptographically secure key generation** — Uses `secrets` module (CSPRNG) for private keys
-- **PHI outbound guard** — Regex-based detection and blocking of SSNs, MRNs, phone numbers, emails
-- **HMAC-SHA256 audit trail** — Tamper-evident chained logging with configurable secret
-- **Input validation** — Bounds checking on primes, set sizes, and protocol parameters
-
-### Environment Variables
-
-| Variable | Description | Default |
-|:---------|:------------|:--------|
-| `AUDIT_SECRET_KEY` | HMAC key for audit trail integrity | Auto-generated (ephemeral) |
-
----
-
-## Testing
+## Docker
 
 ```bash
-# Run all tests
-pytest -v
-
-# Run specific test modules
-pytest tests/test_private_set_intersection_psi.py -v
-pytest tests/test_psi_registry.py -v
-pytest tests/test_enrichment.py -v
+cp .env.example .env
+# Set AUDIT_SECRET_KEY to a unique random secret (e.g. openssl rand -hex 32).
+docker compose up --build
+# API health endpoint: http://localhost:8000/health
 ```
 
----
+The Compose configuration refuses to start without `AUDIT_SECRET_KEY`. Never commit a real key. For an existing installation, rotate any previously published example key. The audit trail is an in-memory, signed hash chain; it is **not durable storage** or a substitute for regulated audit logging.
 
-## Project Structure
+## Testing and security
 
-```
-private-set-intersection-psi/
-├── psi_registry/          # Core PSI engine & agent system
-│   ├── engine.py          # DH-PSI, hash-PSI, cardinality-PSI implementations
-│   ├── models.py          # Data models (FrontierPayload, alerts)
-│   ├── agents.py          # Multi-agent coordinator & sub-agents
-│   ├── cli.py             # Agent CLI (audit, batch, chat, serve)
-│   └── server.py          # FastAPI REST server
-├── agents/                # Enterprise agent suite
-│   ├── base.py            # PHI guard, HMAC audit trail
-│   ├── supervisor.py      # Multi-worker orchestration
-│   ├── workers.py         # Domain-specific evaluation workers
-│   ├── models.py          # Pydantic schemas
-│   ├── api.py             # FastAPI endpoints
-│   └── llm_factory.py     # LLM provider abstraction
-├── tests/                 # Test suite
-├── cli.py                 # PSI protocol CLI
-├── enrichment.py          # Extended PSI feature engines
-├── simulator.py           # High-throughput stress testing
-├── Dockerfile             # Container build
-└── docker-compose.yml     # Multi-service orchestration
+```bash
+python -m pip install -e ".[api,test]"
+pytest -q
+node --check web/app.mjs
+node --check web/psi.mjs
+node --test tests/browser.test.mjs
 ```
 
----
+CI runs Python 3.10–3.12 plus browser-module tests. The PHI regex guard detects selected identifier patterns only; it cannot prove that data is de-identified or satisfy HIPAA/GDPR compliance by itself. Use synthetic data only. The browser stores nothing persistently; Python registry audit state resides in process memory.
+
+## Repository structure
+
+- `psi_registry/engine.py`: simplified PSI and cardinality algorithms, communication analysis.
+- `psi_registry/`: registry evaluation CLI, coordinator, and FastAPI application.
+- `agents/`: separate Pydantic/worker audit demonstration with HMAC-signed log.
+- `web/`: standalone static browser laboratory for GitHub Pages.
+- `tests/`: Python regression and Node.js browser-module tests.
+- `.github/workflows/`: CI and GitHub Pages deployment.
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).

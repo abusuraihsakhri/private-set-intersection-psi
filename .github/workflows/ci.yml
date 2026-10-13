@@ -1,40 +1,48 @@
-name: Private Set Intersection Psi CI/CD & Security Verification
+name: Test and security checks
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [master, main]
   pull_request:
-    branches: [ master, main ]
+    branches: [master, main]
+
+permissions:
+  contents: read
 
 jobs:
-  test-and-audit:
+  test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install fastapi uvicorn pydantic pytest
-
-    - name: Run Pytest Suite
-      run: |
-        pytest -v
-
-    - name: Security SAST & Zero-PHI Audit
-      run: |
-        python -c "
-        from agents.base import PHIGuard, AuditLogger
-        import pytest
-        assert AuditLogger.verify_integrity() is True
-        print('Security & Zero-PHI Audit Passed!')
-        "
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[api,test]"
+      - name: Compile Python sources
+        run: python -m compileall -q agents psi_registry tests cli.py enrichment.py simulator.py
+      - name: Test Python suite
+        run: pytest -q
+      - name: Validate browser modules
+        run: |
+          node --check web/app.mjs
+          node --check web/psi.mjs
+          node --test tests/browser.test.mjs
+      - name: Audit integration smoke test
+        run: |
+          python - <<'PY'
+          from agents.base import AuditLogger, PHIGuard, SecurityException
+          assert AuditLogger.verify_integrity()
+          try:
+              PHIGuard.assert_no_phi("MRN:1234567")
+          except SecurityException:
+              pass
+          else:
+              raise AssertionError("PHI pattern guard did not trigger")
+          PY

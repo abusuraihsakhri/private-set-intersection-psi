@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "private-set-intersection-psi"
-version = "2.0.0"
+version = "2.0.1"
 description = "PSI-Registry: Diffie-Hellman & Oblivious PRF Private Set Intersection Engine"
 readme = "README.md"
 authors = [{ name = "Dr. Abu Suraih Sakhri", email = "abusuraih@example.com" }]
@@ -18,6 +18,10 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = []
+
+[project.optional-dependencies]
+api = ["fastapi>=0.100,<1", "uvicorn>=0.20,<1", "pydantic>=2,<3"]
+test = ["pytest>=8,<10"]
 
 [project.scripts]
 private-set-intersection-psi = "psi_registry.cli:main"

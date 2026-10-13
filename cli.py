@@ -17,7 +17,7 @@ def cmd_run(args):
     """Run PSI protocol."""
     alice = json.loads(args.alice)
     bob = json.loads(args.bob)
-    prime = args.prime if args.prime else None
+    prime = args.prime
     result = run_psi(alice, bob, args.method, prime)
     print(json.dumps(result, indent=2))
 
