@@ -16,7 +16,7 @@ def create_app():
         app = FastAPI(
             title="PSI-Registry: Diffie-Hellman & Oblivious PRF Private Set Intersection Agent",
             description="Discovers shared cohort patients between distinct hospital registries (e.g. rare disease registries) without revealing non-matching records.",
-            version="2.0.0-FRONTIER",
+            version="2.0.1",
         )
 
         class TaskRequest(BaseModel):
