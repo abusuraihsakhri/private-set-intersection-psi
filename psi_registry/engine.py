@@ -6,7 +6,7 @@ Uses only Python stdlib.
 """
 import hashlib
 import hmac
-import random
+import math
 import secrets
 from typing import List, Dict, Any, Optional
 
@@ -32,8 +32,8 @@ def hash_to_group(element: str, prime: int) -> int:
     Hash an element to a group element (mod prime).
     Maps element to a value in [2, prime-1].
     """
-    if prime < 3:
-        raise ValueError(f"Prime must be >= 3, got {prime}")
+    if prime < 5:
+        raise ValueError("A prime of at least 5 is required")
     h = hash_element(element)
     result = h % (prime - 2) + 2  # Map to [2, prime-1]
     return result
@@ -50,7 +50,14 @@ def mod_pow(base: int, exp: int, mod: int) -> int:
 
 def generate_private_key(prime: int) -> int:
     """Generate a cryptographically secure random private key in [2, prime-2]."""
-    return 2 + secrets.randbelow(prime - 3) if prime > 4 else 2
+    if prime < 5:
+        raise ValueError("A prime of at least 5 is required")
+    # Exponentiation is a permutation only for exponents coprime to p-1.
+    # This prevents false-positive matches caused by collapsing group elements.
+    while True:
+        key = 2 + secrets.randbelow(prime - 3)
+        if math.gcd(key, prime - 1) == 1:
+            return key
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +133,17 @@ def dh_psi(alice_elements: List[str], bob_elements: List[str],
     Returns:
         Dict with intersection, communication stats, and protocol details.
     """
+    if not isinstance(prime, int) or isinstance(prime, bool) or prime < 5 or not _is_probable_prime(prime):
+        raise ValueError("DH-PSI demonstration requires a prime modulus >= 5")
+    if not all(isinstance(e, str) for e in alice_elements + bob_elements):
+        raise ValueError("Set elements must be strings")
+    distinct = set(alice_elements) | set(bob_elements)
+    # Tiny demo moduli can map different elements to the same group value.
+    # Fail instead of returning an incorrect intersection.
+    if len({hash_to_group(e, prime) for e in distinct}) != len(distinct):
+        raise ValueError("Hash-to-group collision: use a larger demonstration prime")
+    alice_elements = list(dict.fromkeys(alice_elements))
+    bob_elements = list(dict.fromkeys(bob_elements))
     alice = DHPSIParty("Alice", alice_elements, prime)
     bob = DHPSIParty("Bob", bob_elements, prime)
 
@@ -155,7 +173,8 @@ def dh_psi(alice_elements: List[str], bob_elements: List[str],
 
     # Communication analysis
     element_bits = prime.bit_length()
-    total_bits = comm_round1 * element_bits
+    total_elements = 2 * comm_round1
+    total_bits = total_elements * element_bits
 
     return {
         "intersection": intersection,
@@ -163,10 +182,11 @@ def dh_psi(alice_elements: List[str], bob_elements: List[str],
         "alice_set_size": len(alice_elements),
         "bob_set_size": len(bob_elements),
         "communication_rounds": 2,
-        "elements_transmitted": comm_round1,
+        "elements_transmitted": total_elements,
         "bits_per_element": element_bits,
         "total_communication_bits": total_bits,
-        "total_communication_bytes": total_bits // 8,
+        "total_communication_bytes": (total_bits + 7) // 8,
+        "security_notice": "Centralized educational simulation, NOT secure distributed PSI",
         "prime_bits": prime.bit_length(),
     }
 
@@ -184,11 +204,11 @@ def hash_based_psi(alice_elements: List[str], bob_elements: List[str],
     to compute the hash without revealing elements.)
     """
     salt_bytes = salt.encode() if salt else b""
-    alice_hashes = {hash_element(e, salt_bytes): e for e in alice_elements}
-    bob_hashes = {hash_element(e, salt_bytes): e for e in bob_elements}
-
-    common_hashes = set(alice_hashes.keys()) & set(bob_hashes.keys())
-    intersection = [alice_hashes[h] for h in common_hashes]
+    if not all(isinstance(e, str) for e in alice_elements + bob_elements):
+        raise ValueError("Set elements must be strings")
+    bob_hashes = {hash_element(e, salt_bytes) for e in bob_elements}
+    intersection = [e for e in dict.fromkeys(alice_elements)
+                    if hash_element(e, salt_bytes) in bob_hashes]
 
     return {
         "intersection": intersection,
@@ -196,6 +216,7 @@ def hash_based_psi(alice_elements: List[str], bob_elements: List[str],
         "alice_set_size": len(alice_elements),
         "bob_set_size": len(bob_elements),
         "method": "hash-based",
+        "security_notice": "Shared hashes allow dictionary attacks; NOT cryptographic PSI",
     }
 
 
@@ -215,22 +236,14 @@ def cardinality_only_psi(alice_elements: List[str], bob_elements: List[str],
     
     Simplified: we compute the intersection size without revealing elements.
     """
-    # Hash elements to field elements
-    alice_hashes = set(hash_to_group(e, prime) for e in alice_elements)
-    bob_hashes = set(hash_to_group(e, prime) for e in bob_elements)
-
-    # Count common hashes
-    common = alice_hashes & bob_hashes
-    cardinality = len(common)
-
-    # Compute blinded cardinality (add random noise that cancels)
-    # In a real protocol, this would use homomorphic encryption
-    noise = random.randrange(0, prime)
-    blinded_alice = (cardinality + noise) % prime
-    blinded_bob = (prime - noise) % prime  # -noise mod p
-
-    # Verify: (blinded_alice + blinded_bob) mod p = cardinality
-    verified_cardinality = (blinded_alice + blinded_bob) % prime
+    # This function receives both sets in one process: it is a centralized
+    # cardinality calculation, not a cryptographically private two-party protocol.
+    if not isinstance(prime, int) or isinstance(prime, bool) or prime < 5:
+        raise ValueError("Prime must be >= 5")
+    if not all(isinstance(e, str) for e in alice_elements + bob_elements):
+        raise ValueError("Set elements must be strings")
+    cardinality = len(set(alice_elements) & set(bob_elements))
+    verified_cardinality = cardinality
 
     return {
         "cardinality": cardinality,
@@ -239,6 +252,7 @@ def cardinality_only_psi(alice_elements: List[str], bob_elements: List[str],
         "alice_set_size": len(alice_elements),
         "bob_set_size": len(bob_elements),
         "method": "cardinality-only",
+        "security_notice": "Local cardinality calculation; no cryptographic privacy guarantee",
     }
 
 
@@ -252,12 +266,14 @@ def communication_analysis(set_size_a: int, set_size_b: int,
     """
     Analyze communication complexity of different PSI protocols.
     """
+    if set_size_a < 0 or set_size_b < 0 or element_bits <= 0:
+        raise ValueError("Set sizes must be non-negative and element_bits positive")
     if protocol == "dh":
         # DH-PSI: 2 rounds, |A| + |B| group elements each round
         rounds = 2
         elements_per_round = set_size_a + set_size_b
-        total_elements = rounds * elements_per_round // 2  # one exchange
-        bits = (set_size_a + set_size_b) * element_bits
+        total_elements = rounds * elements_per_round
+        bits = total_elements * element_bits
     elif protocol == "hash":
         # Hash-based: 1 round, |A| + |B| hash values
         rounds = 1
@@ -279,7 +295,8 @@ def communication_analysis(set_size_a: int, set_size_b: int,
         "communication_rounds": rounds,
         "total_elements_transmitted": total_elements,
         "total_bits": bits,
-        "total_bytes": bits // 8,
+        "total_bytes": (bits + 7) // 8,
+        "security_notice": "Illustrative communication model, not a measured secure protocol",
         "complexity": f"O({set_size_a} + {set_size_b})" if protocol != "cardinality" else "O(1)",
     }
 
@@ -301,8 +318,8 @@ def security_assumptions(protocol: str = "dh") -> Dict[str, Any]:
                 "Semi-honest adversary model (both parties follow protocol)",
             ],
             "security_properties": [
-                "Privacy: Neither party learns anything about the other's set except the intersection",
-                "Correctness: The intersection is computed correctly",
+                "This centralized demonstration does not establish PSI privacy",
+                "Correctness requires a sufficiently large group and collision-free mapping of inputs",
                 "No trusted third party required",
             ],
             "attack_vectors": [
@@ -311,7 +328,7 @@ def security_assumptions(protocol: str = "dh") -> Dict[str, Any]:
                 "Timing attacks on modular exponentiation",
             ],
             "mitigations": [
-                "Use large prime (>= 2048 bits for production)",
+                "Use an audited PSI protocol and cryptographic library for production",
                 "Add zero-knowledge proofs of correct execution",
                 "Use constant-time implementations",
             ],
@@ -343,7 +360,7 @@ def security_assumptions(protocol: str = "dh") -> Dict[str, Any]:
                 "DDH assumption (for DH-based variant)",
             ],
             "security_properties": [
-                "Only reveals |A ∩ B|, not the elements",
+                "The result includes only the count, but this local function receives both full sets",
                 "Minimal communication",
             ],
             "attack_vectors": [
@@ -424,7 +441,7 @@ def _is_probable_prime(n: int, rounds: int = 20) -> bool:
         d //= 2
     # Witness loop
     for _ in range(rounds):
-        a = random.randrange(2, n - 1)
+        a = 2 + secrets.randbelow(n - 3)
         x = pow(a, d, n)
         if x == 1 or x == n - 1:
             continue
